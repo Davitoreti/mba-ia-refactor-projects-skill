@@ -1,6 +1,5 @@
 from database import db
-from datetime import datetime
-import json
+from datetime import datetime, timezone
 
 class Task(db.Model):
     __tablename__ = 'tasks'
@@ -12,13 +11,13 @@ class Task(db.Model):
     priority = db.Column(db.Integer, default=3)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     category_id = db.Column(db.Integer, db.ForeignKey('categories.id'), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     due_date = db.Column(db.DateTime, nullable=True)
     tags = db.Column(db.String(500), nullable=True)
 
-    user = db.relationship('User', backref='tasks')
-    category = db.relationship('Category', backref='tasks')
+    user = db.relationship('User', backref='tasks', lazy='selectin')
+    category = db.relationship('Category', backref='tasks', lazy='selectin')
 
     def to_dict(self):
         data = {}
@@ -36,25 +35,14 @@ class Task(db.Model):
         return data
 
     def validate_status(self, new_status):
-        valid = ['pending', 'in_progress', 'done', 'cancelled']
-        if new_status in valid:
-            return True
-        else:
-            return False
+        return new_status in ['pending', 'in_progress', 'done', 'cancelled']
 
     def validate_priority(self, p):
-        if p >= 1 and p <= 5:
-            return True
-        return False
+        return 1 <= p <= 5
 
     def is_overdue(self):
-        if self.due_date:
-            if self.due_date < datetime.utcnow():
-                if self.status != 'done' and self.status != 'cancelled':
-                    return True
-                else:
-                    return False
-            else:
-                return False
-        else:
-            return False
+        return bool(
+            self.due_date
+            and self.due_date < datetime.now(timezone.utc).replace(tzinfo=None)
+            and self.status not in ('done', 'cancelled')
+        )
