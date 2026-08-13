@@ -1,14 +1,17 @@
-const express = require('express');
-const AppManager = require('./AppManager');
-const { config } = require('./utils');
+const { createApplication } = require('./create-application');
+const { loadConfig } = require('./config');
 
-const app = express();
-app.use(express.json());
+function start() {
+    const config = loadConfig();
+    const { app } = createApplication({ config });
 
-const manager = new AppManager();
-manager.initDb();
-manager.setupRoutes(app);
+    return app.listen(config.port, () => {
+        console.log(`LMS rodando na porta ${config.port}...`);
+    });
+}
 
-app.listen(config.port, () => {
-    console.log(`Frankenstein LMS rodando na porta ${config.port}...`);
-});
+if (require.main === module) {
+    start();
+}
+
+module.exports = { start };
