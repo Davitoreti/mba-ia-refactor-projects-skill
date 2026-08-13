@@ -1,88 +1,50 @@
-from flask import Flask, jsonify, request
-from flask_cors import CORS
-import controllers
-from database import get_db
+import logging
 
-app = Flask(__name__)
-app.config["SECRET_KEY"] = "minha-chave-super-secreta-123"
-app.config["DEBUG"] = True
-CORS(app)
+from flask import Flask, jsonify
 
-app.add_url_rule("/produtos", "listar_produtos", controllers.listar_produtos, methods=["GET"])
-app.add_url_rule("/produtos/busca", "buscar_produtos", controllers.buscar_produtos, methods=["GET"])
-app.add_url_rule("/produtos/<int:id>", "buscar_produto", controllers.buscar_produto, methods=["GET"])
-app.add_url_rule("/produtos", "criar_produto", controllers.criar_produto, methods=["POST"])
-app.add_url_rule("/produtos/<int:id>", "atualizar_produto", controllers.atualizar_produto, methods=["PUT"])
-app.add_url_rule("/produtos/<int:id>", "deletar_produto", controllers.deletar_produto, methods=["DELETE"])
+from config import Settings
+from database import init_db, register_database
+from errors import AppError
+from routes import api
 
-app.add_url_rule("/usuarios", "listar_usuarios", controllers.listar_usuarios, methods=["GET"])
-app.add_url_rule("/usuarios/<int:id>", "buscar_usuario", controllers.buscar_usuario, methods=["GET"])
-app.add_url_rule("/usuarios", "criar_usuario", controllers.criar_usuario, methods=["POST"])
-app.add_url_rule("/login", "login", controllers.login, methods=["POST"])
 
-app.add_url_rule("/pedidos", "criar_pedido", controllers.criar_pedido, methods=["POST"])
-app.add_url_rule("/pedidos", "listar_todos_pedidos", controllers.listar_todos_pedidos, methods=["GET"])
-app.add_url_rule("/pedidos/usuario/<int:usuario_id>", "listar_pedidos_usuario", controllers.listar_pedidos_usuario, methods=["GET"])
-app.add_url_rule("/pedidos/<int:pedido_id>/status", "atualizar_status_pedido", controllers.atualizar_status_pedido, methods=["PUT"])
+def create_app(test_config=None):
+    settings = Settings.from_env()
+    app = Flask(__name__)
+    app.config.from_mapping(
+        SECRET_KEY=settings.secret_key,
+        DATABASE_PATH=settings.database_path,
+        DEBUG=settings.debug,
+        ENVIRONMENT=settings.environment,
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_SECURE=settings.environment == "production",
+    )
+    if test_config:
+        app.config.update(test_config)
 
-app.add_url_rule("/relatorios/vendas", "relatorio_vendas", controllers.relatorio_vendas, methods=["GET"])
+    register_database(app)
+    app.register_blueprint(api)
+    register_error_handlers(app)
+    return app
 
-app.add_url_rule("/health", "health_check", controllers.health_check, methods=["GET"])
 
-@app.route("/")
-def index():
-    return jsonify({
-        "mensagem": "Bem-vindo à API da Loja",
-        "versao": "1.0.0",
-        "endpoints": {
-            "produtos": "/produtos",
-            "usuarios": "/usuarios",
-            "pedidos": "/pedidos",
-            "login": "/login",
-            "relatorios": "/relatorios/vendas",
-            "health": "/health"
-        }
-    })
+def register_error_handlers(app):
+    @app.errorhandler(AppError)
+    def handle_app_error(error):
+        return jsonify({"erro": error.public_message, "sucesso": False}), error.status_code
 
-@app.route("/admin/reset-db", methods=["POST"])
-def reset_database():
-    db = get_db()
-    cursor = db.cursor()
-    cursor.execute("DELETE FROM itens_pedido")
-    cursor.execute("DELETE FROM pedidos")
-    cursor.execute("DELETE FROM produtos")
-    cursor.execute("DELETE FROM usuarios")
-    db.commit()
-    print("!!! BANCO DE DADOS RESETADO !!!")
-    return jsonify({"mensagem": "Banco de dados resetado", "sucesso": True}), 200
+    @app.errorhandler(Exception)
+    def handle_unexpected_error(error):
+        app.logger.exception("Erro inesperado", exc_info=error)
+        return jsonify({"erro": "Erro interno"}), 500
 
-@app.route("/admin/query", methods=["POST"])
-def executar_query():
-    dados = request.get_json()
-    query = dados.get("sql", "")
-    if not query:
-        return jsonify({"erro": "Query não informada"}), 400
 
-    db = get_db()
-    cursor = db.cursor()
-    try:
-        cursor.execute(query)
-        if query.strip().upper().startswith("SELECT"):
-            rows = cursor.fetchall()
-            result = [dict(row) for row in rows]
-            return jsonify({"dados": result, "sucesso": True}), 200
-        else:
-            db.commit()
-            return jsonify({"mensagem": "Query executada", "sucesso": True}), 200
-    except Exception as e:
-        return jsonify({"erro": str(e)}), 500
+app = create_app()
+
 
 if __name__ == "__main__":
-
-    get_db()
-    print("=" * 50)
-    print("SERVIDOR INICIADO")
-    print("Rodando em http://localhost:5000")
-    print("=" * 50)
-
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    logging.basicConfig(level=logging.INFO)
+    with app.app_context():
+        init_db()
+    app.run(host="127.0.0.1", port=5000, debug=app.config["DEBUG"])
